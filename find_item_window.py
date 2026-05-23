@@ -37,6 +37,9 @@ TTS 選項（--tts）：
 
   # 接收 ESP32 影像 + PC 麥克風語音辨識
   python find_item_window.py --source ws --ws-url ws://127.0.0.1:8765/ws/viewer --tts local --mic
+
+  #沒有tts
+  python find_item_window.py --source ws --ws-url ws://127.0.0.1:8765/ws/viewer --mic
 """
 from __future__ import annotations
 
@@ -113,7 +116,7 @@ class HandResult:
 #  YOLO 偵測器（懶載入）
 # ════════════════════════════════════════════════════════
 class YoloDetector:
-    def __init__(self, weights="yolov8n.pt", device="cpu", conf=0.2):
+    def __init__(self, weights="yolov8s.pt", device="cpu", conf=0.5):
         self.weights = weights
         self.device  = device
         self.conf    = conf
@@ -275,6 +278,7 @@ class FindItemFSM:
     def step(self, frame: np.ndarray,
              dets: List[Detection],
              hand: Optional[HandResult]) -> None:
+        self._last_dets = dets
         if frame is None: return
         h, w = frame.shape[:2]
         now  = time.monotonic()
@@ -307,6 +311,9 @@ class FindItemFSM:
         if obj is None:
             if now - self._t_search >= self.SEARCH_INT:
                 self._t_search = now
+                log.warning("[FSM] 找不到 target_en='%s'，偵測到的標籤：%s",
+                        self.target_en,
+                        [d.label for d in self._last_dets] if hasattr(self, '_last_dets') else "未記錄")
                 self._say(f"正在尋找{self.target_zh}，請慢慢轉動方向。")
             return
         self._say(f"已發現{self.target_zh}，正在引導方向。")
@@ -802,9 +809,9 @@ def main():
     p.add_argument("--control-url",  default="ws://127.0.0.1:8765/ws/find_item_control",
                    help="app_main control WebSocket URL for voice mode/target updates")
     p.add_argument("--webcam-index", type=int, default=0)
-    p.add_argument("--yolo-weights", default="yolov8n.pt")
+    p.add_argument("--yolo-weights", default="yolov8s.pt")
     p.add_argument("--yolo-device",  default="cpu")
-    p.add_argument("--yolo-conf",    type=float, default=0.35)
+    p.add_argument("--yolo-conf",    type=float, default=0.5)
     p.add_argument("--tts",          choices=["local", "print"], default="print",
                    help="TTS 後端：local = aiglass3 play_voice_text；print = 只印 terminal")
     p.add_argument("--mic",          action="store_true",
@@ -819,17 +826,29 @@ def main():
     )
 
     # ── TTS 後端 ──────────────────────────────
-    if args.tts == "local":
+    import pygame
+    from gtts import gTTS
+    import os
+    
+    pygame.mixer.init()
+    
+    def pc_speak(text):
+        # 將文字印在終端機，並即時轉換成語音由電腦喇叭播出
+        print(f"[系統語音] {text}", flush=True)
         try:
-            from audio_player import play_voice_text, initialize_audio_system
-            initialize_audio_system()
-            tts_fn = play_voice_text
-            log.info("[TTS] 使用 aiglass3 play_voice_text")
-        except ImportError:
-            log.warning("[TTS] 無法匯入 audio_player，改用 print 模式")
-            tts_fn = lambda t: print(f"[TTS] {t}", flush=True)
-    else:
-        tts_fn = lambda t: print(f"[TTS] {t}", flush=True)
+            tts = gTTS(text=text, lang='zh-TW')
+            filename = "temp_voice.mp3"
+            tts.save(filename)
+            pygame.mixer.music.load(filename)
+            pygame.mixer.music.play()
+            # 等待語音播放完畢，避免被截斷
+            while pygame.mixer.music.get_busy():
+                pygame.time.Clock().tick(10)
+        except Exception as e:
+            print(f"語音播放失敗: {e}")
+
+    tts_fn = pc_speak
+    log.info("[TTS] 已啟用本機 PC 喇叭語音提示")
 
     # ── 初始化偵測器與狀態機 ──────────────────
     detector = YoloDetector(args.yolo_weights, args.yolo_device, args.yolo_conf)

@@ -428,18 +428,24 @@ async def start_ai_with_text_custom(user_text: str):
             play_voice_text("盲道導航已啟動。")
         return
     if "FIND_ITEM" in intent:
-        find_pattern = r"(?:^\s*幫我)?\s*找(?:一下)?\s*(.+?)(?:。|！|？|$)"
+        # 更寬鬆的 pattern，涵蓋「我要找」「幫我找」「找一下」「找」
+        find_pattern = r"找(?:一下|一個|個|下)?\s*(.{1,10}?)(?:。|！|？|，|$)"
         match = re.search(find_pattern, user_text)
-        item_cn = match.group(1).strip() if match else "物品"
-        label_en, src = extract_english_label(item_cn)
+        if match:
+            item_cn = match.group(1).strip()
+        else:
+            # fallback：把整句丟給 extractor 自己判斷
+            item_cn = user_text.strip()
 
-        # 通知 find_item_window.py 的 FSM
+        label_en, src = extract_english_label(item_cn)
+        print(f"[FIND_ITEM] 語音='{user_text}' → item_cn='{item_cn}' → en='{label_en}' (src={src})")
+
         _notify_find_window(item_cn, label_en)
 
         if orchestrator:
             orchestrator.start_item_search()
-        start_yolomedia_with_target(label_en)
 
+        start_yolomedia_with_target(label_en)
         await ui_broadcast_final(f"[找物品] 正在尋找 {item_cn}...")
         play_voice_text(f"正在尋找 {item_cn}。")
         return

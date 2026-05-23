@@ -56,16 +56,19 @@ PROMPT_SYS = (
 )
 
 def extract_english_label(query_cn: str) -> Tuple[str, str]:
-    """
-    返回 (label_en, source)；source ∈ {'local', 'qwen', 'fallback'}
-    """
-    q = (query_cn or "").strip().lower()
-    if q in LOCAL_CN2EN:
-        return LOCAL_CN2EN[q], "local"
-
-    # 简单规则：去掉前缀修饰词
+    q = (query_cn or "").strip()
+    
+    # 清掉常見前綴，只留物品詞
+    for prefix in ["我要找", "幫我找", "請找", "找一下", "找"]:
+        if q.startswith(prefix):
+            q = q[len(prefix):].strip()
+            break
+    
+    q_lower = q.lower()
+    if q_lower in LOCAL_CN2EN:
+        return LOCAL_CN2EN[q_lower], "local"
     for k, v in LOCAL_CN2EN.items():
-        if k in q:
+        if k in q_lower:
             return v, "local"
 
     # 调用 Qwen Turbo（兼容 Chat Completions）
